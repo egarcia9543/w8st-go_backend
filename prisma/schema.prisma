@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  gmailMessageId  String   @unique
+  type            String
+  amount          Float
+  currency        String   @default("COP")
+  paymentMethod   String?
+  merchant        String?
+  cardLast4       String?
+  channel         String?
+  recipientName   String?
+  recipientKey    String?
+  transactionDate DateTime
+  createdAt       DateTime @default(now())
+}
+
+model GmailSync {
+  id        String   @id @default(cuid())
+  historyId String
+  updatedAt DateTime @updatedAt
+}
+
+model OAuthToken {
+  id           String   @id @default(cuid())
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  updatedAt    DateTime @updatedAt
+}
