@@ -14,15 +14,19 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^5.0.0",
     "googleapis": "^173.0.0",
+    "jsonwebtoken": "^9.0.3",
     "prisma": "^6.0.0"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.1.1",
     "tsx": "^4.23.0",
     "typescript": "^5.6.3"

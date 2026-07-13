@@ -1,7 +1,10 @@
 import { Router, Request, Response } from "express";
 import prisma from "../../../infrastructure/database/prisma";
+import { requireAuth } from "../middlewares/auth.middleware";
 
 export const transactionRouter = Router();
+
+transactionRouter.use(requireAuth);
 
 transactionRouter.get("/transactions", async (req: Request, res: Response) => {
   const { month } = req.query as { month?: string };

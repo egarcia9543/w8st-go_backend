@@ -12,7 +12,12 @@ export const getAuthUrl = () => {
   const client = createOAuthClient();
   return client.generateAuthUrl({
     access_type: "offline",
-    scope: ["https://www.googleapis.com/auth/gmail.readonly"],
+    scope: [
+      "openid",
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/gmail.readonly",
+    ],
     prompt: "consent",
   });
 };
