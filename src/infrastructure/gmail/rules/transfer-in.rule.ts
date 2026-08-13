@@ -18,7 +18,9 @@ export const transferInRule: EmailRule = {
     AMOUNT, //                                                  2: moneda  3: monto
     String.raw`\s+en\s+tu\s+cuenta\s+`,
     LAST4, //                                                   4: mi instrumento
-    String.raw`(?:\s+conectada\s+a\s+la\s+llave\s+\d+)?`, //     (mi llave: se ignora)
+    // Mi propia llave: se ignora deliberadamente (ver comentario de arriba).
+    // Puede ser alfanumérica (con arroba), no solo dígitos.
+    String.raw`(?:\s+conectada\s+a\s+la\s+llave\s+[\w@.\-]+)?`,
     String.raw`\s+el\s+`,
     DATE_TIME, //                                               5: fecha   6: hora
   ]),

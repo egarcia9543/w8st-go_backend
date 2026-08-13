@@ -4,6 +4,7 @@ import {
   AMOUNT,
   DATE_TIME,
   LAST4,
+  LLAVE,
   construir,
   limpiarTexto,
   normalizarMoneda,
@@ -15,7 +16,8 @@ export const transferOutRule: EmailRule = {
   pattern: construir([
     String.raw`transferiste\s+`,
     AMOUNT, //                                  1: moneda  2: monto
-    String.raw`\s+a\s+la\s+llave\s+(\d+)`, //    3: llave de la contraparte
+    String.raw`\s+a\s+la\s+llave\s+`,
+    LLAVE, //                                   3: llave de la contraparte
     String.raw`\s+desde\s+tu\s+(?:cuenta|producto)\s+`,
     LAST4, //                                   4: mi instrumento
     String.raw`\s+a\s+(.+?)\s+el\s+`, //         5: nombre de la contraparte

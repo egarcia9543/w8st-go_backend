@@ -21,23 +21,23 @@ describe("payment-out (#1: Pagaste a tercero)", () => {
   });
 
   test("lee el monto en convención americana", () => {
-    assert.equal(tx.amount, 40000);
+    assert.equal(tx.amount, 50000);
     assert.equal(tx.currency, "COP");
   });
 
-  test("lee 'producto 9577' sin asterisco", () => {
-    assert.equal(tx.instrumentLast4, "9577");
+  test("lee 'producto NNNN' sin asterisco", () => {
+    assert.equal(tx.instrumentLast4, "4021");
     assert.equal(tx.instrumentKind, "ACCOUNT");
   });
 
   test("lee el beneficiario sin arrastrar puntuación", () => {
-    assert.equal(tx.counterpartyName, "FUNDACION PLAN");
+    assert.equal(tx.counterpartyName, "FUNDACION EJEMPLO");
   });
 
   // El caso que producía Invalid Date: fecha con segundos y sin "a las".
   test("lee la fecha con segundos y sin 'a las', en hora de Bogotá", () => {
     assert.ok(!Number.isNaN(tx.transactionDate.getTime()), "fecha inválida");
-    assert.equal(tx.transactionDate.toISOString(), "2026-08-12T15:37:27.000Z");
+    assert.equal(tx.transactionDate.toISOString(), "2026-03-04T15:37:27.000Z");
   });
 });
 
@@ -48,12 +48,12 @@ describe("transfer-out (#2: transferencia saliente)", () => {
     assert.equal(tx.ruleName, "transfer-out");
     assert.equal(tx.direction, "OUTFLOW");
     assert.equal(tx.fundingSource, "OWN_FUNDS");
-    assert.equal(tx.amount, 44000);
+    assert.equal(tx.amount, 75000);
   });
 
   test("la llave capturada es la de la contraparte", () => {
-    assert.equal(tx.counterpartyKey, "1020302094");
-    assert.equal(tx.counterpartyName, "CAMILO GARCIA GARCIA");
+    assert.equal(tx.counterpartyKey, "3001234567");
+    assert.equal(tx.counterpartyName, "JUAN PEREZ GOMEZ");
   });
 
   test("detecta el canal Bre-b", () => {
@@ -61,7 +61,7 @@ describe("transfer-out (#2: transferencia saliente)", () => {
   });
 
   test("año de 2 dígitos", () => {
-    assert.equal(tx.transactionDate.toISOString(), "2026-08-12T20:58:00.000Z");
+    assert.equal(tx.transactionDate.toISOString(), "2026-03-05T20:58:00.000Z");
   });
 });
 
@@ -71,21 +71,21 @@ describe("transfer-in (#3: transferencia entrante)", () => {
   test("clasifica como INGRESO", () => {
     assert.equal(tx.ruleName, "transfer-in");
     assert.equal(tx.direction, "INFLOW");
-    assert.equal(tx.amount, 335000);
+    assert.equal(tx.amount, 120000);
   });
 
   test("captura al remitente como contraparte", () => {
-    assert.equal(tx.counterpartyName, "CAMILO GARCIA GARCIA");
+    assert.equal(tx.counterpartyName, "MARIA LOPEZ RUIZ");
   });
 
-  // La llave 1010033459 es la del PROPIO usuario, no la del remitente.
+  // La llave del correo es la del PROPIO usuario, no la del remitente.
   // Guardarla como counterpartyKey sería el error que motivó el renombre.
   test("NO guarda la llave propia como contraparte", () => {
     assert.equal(tx.counterpartyKey, null);
   });
 
   test("captura la cuenta propia", () => {
-    assert.equal(tx.instrumentLast4, "9577");
+    assert.equal(tx.instrumentLast4, "4021");
   });
 });
 
@@ -96,11 +96,11 @@ describe("payroll (#4: nómina)", () => {
     assert.equal(tx.ruleName, "payroll");
     assert.equal(tx.direction, "INFLOW");
     assert.equal(tx.fundingSource, "OWN_FUNDS");
-    assert.equal(tx.amount, 2088000);
+    assert.equal(tx.amount, 3000000);
   });
 
   test("lee el empleador con 'Nomina' sin tilde", () => {
-    assert.equal(tx.counterpartyName, "PRAGMA S A");
+    assert.equal(tx.counterpartyName, "ACME S A");
   });
 
   // Sin últimos 4 dígitos: por esto Transaction.cardId es nullable.
@@ -119,19 +119,19 @@ describe("purchase (#5: compra con tarjeta de crédito)", () => {
     assert.equal(tx.fundingSource, "CREDIT");
   });
 
-  // Convención colombiana: 3.900,00 son 3900 pesos, no 3.9.
+  // Convención colombiana: 5.500,00 son 5500 pesos, no 5.5.
   test("lee el monto en convención colombiana", () => {
-    assert.equal(tx.amount, 3900);
+    assert.equal(tx.amount, 5500);
     assert.equal(tx.currency, "COP");
   });
 
   test("identifica la tarjeta de crédito", () => {
-    assert.equal(tx.instrumentLast4, "7829");
+    assert.equal(tx.instrumentLast4, "3388");
     assert.equal(tx.instrumentKind, "CREDIT");
   });
 
   test("lee el comercio sin la coma que sigue", () => {
-    assert.equal(tx.merchant, "APPLE.COM/BILL");
+    assert.equal(tx.merchant, "TIENDA.COM/PAGO");
   });
 });
 
@@ -141,10 +141,26 @@ describe("registro de reglas", () => {
     assert.equal(new Set(nombres).size, nombres.length);
   });
 
-  // El orden es contrato: si aparece una regla de pago de TC, va antes de
-  // payment-out o esta se la traga y cuenta un traslado interno como gasto.
-  test("payment-out es la primera del registro", () => {
-    assert.equal(rules[0].name, "payment-out");
+  // El orden es contrato, pero lo que importa no es la posición absoluta sino
+  // que las reglas específicas vayan antes que las genéricas con el mismo verbo.
+  // Si aparece una regla de pago de TC, va antes de payment-out o esta se la
+  // traga y cuenta un traslado interno como gasto de bolsillo.
+  const posicion = (nombre: string) => rules.findIndex((r) => r.name === nombre);
+
+  test("las reglas de 'pagaste' van de específica a genérica", () => {
+    assert.ok(
+      posicion("payment-qr") < posicion("payment-out"),
+      "payment-qr debe evaluarse antes que payment-out"
+    );
+  });
+
+  test("las reglas de 'Transferiste' van de específica a genérica", () => {
+    assert.ok(posicion("payment-boton") < posicion("transfer-out"));
+    assert.ok(posicion("transfer-to-account") < posicion("transfer-out"));
+  });
+
+  test("purchase-postfix se evalúa antes que purchase", () => {
+    assert.ok(posicion("purchase-postfix") < posicion("purchase"));
   });
 
   test("ningún cuerpo matchea dos reglas distintas", () => {
@@ -179,13 +195,13 @@ describe("extracción del cuerpo desde el payload de Gmail", () => {
   test("encuentra text/plain anidado dos niveles", () => {
     const r = parseEmail(payloadAnidado(CUERPOS.compraCredito));
     assert.equal(r.ok, true);
-    if (r.ok) assert.equal(r.transaction.amount, 3900);
+    if (r.ok) assert.equal(r.transaction.amount, 5500);
   });
 
   test("cae a text/html y lo limpia cuando no hay text/plain", () => {
     const r = parseEmail(payloadHtml(CUERPOS.transferenciaSaliente));
     assert.equal(r.ok, true);
-    if (r.ok) assert.equal(r.transaction.amount, 44000);
+    if (r.ok) assert.equal(r.transaction.amount, 75000);
   });
 
   test("payload sin partes ni body -> NO_BODY", () => {

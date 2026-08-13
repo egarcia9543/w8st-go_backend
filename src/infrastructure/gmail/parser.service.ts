@@ -1,10 +1,11 @@
 import { extractBody } from "./parsing/html";
 import { rules } from "./rules";
+import { motivoParaIgnorar } from "./rules/ignorables";
 import { ParsedTransaction } from "./rules/types";
 
 export type { ParsedTransaction } from "./rules/types";
 
-export type ParseFailure = "NO_BODY" | "NO_MATCH" | "PARSE_ERROR";
+export type ParseFailure = "NO_BODY" | "NO_MATCH" | "PARSE_ERROR" | "IGNORED";
 
 export type ParseResult =
   | { ok: true; transaction: ParsedTransaction; body: string }
@@ -14,6 +15,11 @@ export type ParseResult =
 // Separado de parseEmail para poder testear sin construir un payload de Gmail.
 export const parseBody = (body: string): ParseResult => {
   if (!body.trim()) return { ok: false, reason: "NO_BODY", body };
+
+  // Antes de las reglas: los avisos que no son movimientos de dinero se
+  // descartan explícitamente para no ensuciar la bandeja de diagnóstico.
+  const ignorable = motivoParaIgnorar(body);
+  if (ignorable) return { ok: false, reason: "IGNORED", body, error: ignorable };
 
   for (const rule of rules) {
     const match = body.match(rule.pattern);

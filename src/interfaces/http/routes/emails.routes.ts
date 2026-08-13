@@ -1,10 +1,19 @@
 import { Router, Request, Response } from "express";
 import prisma from "../../../infrastructure/database/prisma";
 import { requireAuth } from "../middlewares/auth.middleware";
+import { reprocessUnparsed } from "../../../application/use-cases/reprocess-unparsed";
 
 export const emailsRouter = Router();
 
 emailsRouter.use(requireAuth);
+
+// Vuelve a parsear los correos ya capturados. Se corre después de escribir una
+// regla nueva: el sync normal no los traería de vuelta porque su ventana está
+// anclada al último sync. No toca la API de Gmail.
+emailsRouter.post("/emails/unparsed/reprocess", async (_req: Request, res: Response) => {
+  const resultado = await reprocessUnparsed();
+  res.json(resultado);
+});
 
 // La herramienta de diagnóstico permanente: cada vez que el banco cambie una
 // plantilla, aparece aquí en vez de desaparecer en un console.warn.

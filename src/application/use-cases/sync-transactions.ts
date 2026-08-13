@@ -4,9 +4,9 @@ import {
   FetchOptions,
 } from "../../infrastructure/gmail/gmail.service";
 import { parseEmail } from "../../infrastructure/gmail/parser.service";
-import { CardKind } from "../../infrastructure/gmail/rules/types";
 import { diaBogota } from "../../infrastructure/date/bogota";
 import { ventanaDesde } from "./sync-window";
+import { resolverCard } from "./resolve-card";
 import prisma from "../../infrastructure/database/prisma";
 
 const calcularDesde = async (explicito?: string): Promise<string> => {
@@ -23,6 +23,8 @@ export type SyncResult = {
   created: number;
   duplicated: number;
   unparsed: number;
+  /// Avisos del banco que no son movimientos de dinero. Ni error ni transacción.
+  ignored: number;
   scanned: number;
   /// Desde qué fecha se miró el buzón en esta corrida (YYYY/MM/DD).
   since: string;
@@ -34,23 +36,6 @@ export type SyncResult = {
    * ELIMINAR cuando el front migre a los tres contadores.
    */
   skipped: number;
-};
-
-// last4 por sí solo no identifica un instrumento: puedes tener una débito y una
-// crédito terminadas en los mismos 4 dígitos. La identidad es [last4, kind].
-const resolverCard = async (
-  last4: string | null,
-  kind: CardKind | null
-): Promise<string | null> => {
-  if (!last4 || !kind) return null;
-
-  const card = await prisma.card.upsert({
-    where: { last4_kind: { last4, kind } },
-    update: {},
-    create: { last4, kind },
-  });
-
-  return card.id;
 };
 
 export const syncTransactions = async (options: FetchOptions = {}): Promise<SyncResult> => {
@@ -72,6 +57,7 @@ export const syncTransactions = async (options: FetchOptions = {}): Promise<Sync
   let created = 0;
   let duplicated = 0;
   let unparsed = 0;
+  let ignored = 0;
 
   for (const email of emails) {
     if (yaRegistrados.has(email.id)) {
@@ -80,6 +66,18 @@ export const syncTransactions = async (options: FetchOptions = {}): Promise<Sync
     }
 
     const resultado = parseEmail(email.payload);
+
+    // Avisos que no son movimientos de dinero (inscripción de facturas,
+    // marketing). Se cuentan aparte y NO entran a la bandeja de diagnóstico:
+    // mezclarlos con las plantillas que sí faltan la vuelve inservible.
+    if (!resultado.ok && resultado.reason === "IGNORED") {
+      await prisma.unparsedEmail.updateMany({
+        where: { gmailMessageId: email.id, resolvedAt: null },
+        data: { resolvedAt: new Date() },
+      });
+      ignored++;
+      continue;
+    }
 
     if (!resultado.ok) {
       // Antes esto era un console.warn y el cuerpo se perdía: no había forma de
@@ -134,13 +132,14 @@ export const syncTransactions = async (options: FetchOptions = {}): Promise<Sync
 
   console.log(
     `[sync] desde ${since} — ${emails.length} revisados: ${created} nuevas, ` +
-      `${duplicated} ya existían, ${unparsed} sin parsear`
+      `${duplicated} ya existían, ${unparsed} sin parsear, ${ignored} ignorados`
   );
 
   return {
     created,
     duplicated,
     unparsed,
+    ignored,
     scanned: emails.length,
     since,
     skipped: duplicated + unparsed,

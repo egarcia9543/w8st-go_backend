@@ -89,7 +89,10 @@ describe("stripHtml", () => {
   });
 
   test("conserva el texto de un enlace y descarta el href", () => {
-    assert.equal(stripHtml('<a href="http://x.com/track?id=1">APPLE.COM/BILL</a>'), "APPLE.COM/BILL");
+    assert.equal(
+      stripHtml('<a href="http://ejemplo.invalid/track?id=1">TIENDA.COM/PAGO</a>'),
+      "TIENDA.COM/PAGO"
+    );
   });
 });
 
