@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import { verifySession, SessionPayload } from "../../../infrastructure/auth/jwt.service";
+import { SessionPayload } from "../../../application/ports/session-service";
+import { sessionService } from "../../../infrastructure/auth";
 import { SESSION_COOKIE } from "../../../infrastructure/auth/cookie";
 
 declare global {
@@ -24,7 +25,7 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction) => 
   }
 
   try {
-    req.user = verifySession(token);
+    req.user = sessionService.verify(token);
     next();
   } catch {
     return res.status(401).json({ error: "Token inválido o expirado." });
