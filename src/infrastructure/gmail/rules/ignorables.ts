@@ -20,6 +20,13 @@ export const IGNORABLES: { nombre: string; patron: RegExp }[] = [
     nombre: "marketing",
     patron: /Tenemos\s+novedades\b/i,
   },
+  {
+    // Códigos de un solo uso para entrar a la sucursal virtual. Llegan del mismo
+    // remitente que las alertas de movimientos, así que hay que descartarlos
+    // explícitamente. Nunca guardamos su cuerpo.
+    nombre: "codigo-seguridad",
+    patron: /c[oó]digo\s+de\s+seguridad|No\s+lo\s+compartas\s+con\s+nadie/i,
+  },
 ];
 
 /// Devuelve el nombre del patrón que hace ignorable el correo, o null.
