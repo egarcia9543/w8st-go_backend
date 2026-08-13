@@ -16,11 +16,6 @@ export type ParseResult =
 export const parseBody = (body: string): ParseResult => {
   if (!body.trim()) return { ok: false, reason: "NO_BODY", body };
 
-  // Antes de las reglas: los avisos que no son movimientos de dinero se
-  // descartan explícitamente para no ensuciar la bandeja de diagnóstico.
-  const ignorable = motivoParaIgnorar(body);
-  if (ignorable) return { ok: false, reason: "IGNORED", body, error: ignorable };
-
   for (const rule of rules) {
     const match = body.match(rule.pattern);
     if (!match) continue;
@@ -58,6 +53,13 @@ export const parseBody = (body: string): ParseResult => {
       };
     }
   }
+
+  // Los ignorables se evalúan DESPUÉS de las reglas, nunca antes. Al revés, un
+  // patrón demasiado laxo puede tragarse movimientos reales sin dejar rastro:
+  // "código de seguridad" aparece en el pie de casi todos los correos del banco,
+  // y descartó 53 compras en silencio antes de invertir este orden.
+  const ignorable = motivoParaIgnorar(body);
+  if (ignorable) return { ok: false, reason: "IGNORED", body, error: ignorable };
 
   return { ok: false, reason: "NO_MATCH", body };
 };

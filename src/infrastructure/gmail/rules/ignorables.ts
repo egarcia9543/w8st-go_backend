@@ -21,11 +21,14 @@ export const IGNORABLES: { nombre: string; patron: RegExp }[] = [
     patron: /Tenemos\s+novedades\b/i,
   },
   {
-    // Códigos de un solo uso para entrar a la sucursal virtual. Llegan del mismo
-    // remitente que las alertas de movimientos, así que hay que descartarlos
-    // explícitamente. Nunca guardamos su cuerpo.
+    // Códigos de un solo uso para entrar a la sucursal virtual.
+    //
+    // El patrón apunta a la frase que SOLO aparece en ese correo. Un patrón
+    // laxo como /código de seguridad/ matchea el pie de seguridad que traen casi
+    // todos los correos del banco ("Cuida tu usuario, clave, número de tarjeta
+    // de crédito, fecha de vencimiento y código de seguridad").
     nombre: "codigo-seguridad",
-    patron: /c[oó]digo\s+de\s+seguridad|No\s+lo\s+compartas\s+con\s+nadie/i,
+    patron: /Hemos\s+generado\s+para\s+ti\s+este\s+c[oó]digo|Estas\s+intentando\s+ingresar\s+a\s+la\s+Sucursal\s+Virtual/i,
   },
 ];
 
