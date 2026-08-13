@@ -1,8 +1,10 @@
 import { Router, Request, Response } from "express";
 import { SESSION_COOKIE, sessionCookieOptions } from "../../../infrastructure/auth/cookie";
 import { requireAuth } from "../middlewares/auth.middleware";
-import { userAuthenticator, sessionService, gmailConnector } from "../../../infrastructure/auth";
+import { userAuthenticator, sessionService, googleAuthProvider } from "../../../infrastructure/auth";
 import { InvalidCredentialsError } from "../../../application/ports/user-authenticator";
+import { GoogleAuthError } from "../../../application/ports/google-auth";
+import { NotAllowedError, signInWithGoogle } from "../../../application/use-cases/sign-in-with-google";
 
 export const authRouter = Router();
 
@@ -39,23 +41,37 @@ authRouter.post("/auth/logout", (_req: Request, res: Response) => {
   res.json({ message: "Sesión cerrada." });
 });
 
-// --- Conexión de Gmail (NO es login): autoriza el acceso que /sync necesita. ---
-// Protegido: solo el owner ya autenticado puede conectar Gmail.
-authRouter.get("/auth/google", requireAuth, (_req: Request, res: Response) => {
-  res.redirect(gmailConnector.getAuthUrl());
+// --- Login con Google ---
+// Una sola autorización resuelve identidad y permiso de lectura de Gmail.
+// NO lleva requireAuth: es justamente la puerta de entrada.
+authRouter.get("/auth/google", (_req: Request, res: Response) => {
+  res.redirect(googleAuthProvider.getAuthUrl());
 });
 
-authRouter.get("/auth/callback", requireAuth, async (req: Request, res: Response) => {
-  try {
-    await gmailConnector.handleCallback(req.query as Record<string, string | undefined>);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "No se pudo conectar Gmail.";
-    return res.status(400).json({ error: message });
-  }
-
+authRouter.get("/auth/callback", async (req: Request, res: Response) => {
   const frontendUrl = process.env.FRONTEND_URL;
-  if (frontendUrl) {
-    return res.redirect(frontendUrl);
+
+  try {
+    const user = await signInWithGoogle(
+      googleAuthProvider,
+      req.query as Record<string, string | undefined>
+    );
+
+    res.cookie(SESSION_COOKIE, sessionService.issue(user), sessionCookieOptions);
+    return frontendUrl ? res.redirect(frontendUrl) : res.json({ user });
+  } catch (err) {
+    if (err instanceof NotAllowedError) {
+      return frontendUrl
+        ? res.redirect(`${frontendUrl}/login?error=not_allowed`)
+        : res.status(403).json({ error: err.message });
+    }
+
+    if (err instanceof GoogleAuthError) {
+      return frontendUrl
+        ? res.redirect(`${frontendUrl}/login?error=google`)
+        : res.status(400).json({ error: err.message });
+    }
+
+    throw err;
   }
-  res.json({ message: "Gmail conectado correctamente." });
 });

@@ -11,23 +11,25 @@ datasource db {
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
-  passwordHash String
+  passwordHash String?
   name         String?
+  googleSub    String?  @unique
+  picture      String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  transactions   Transaction[]
+  cards          Card[]
+  unparsedEmails UnparsedEmail[]
+  oauthToken     OAuthToken?
+  gmailSync      GmailSync?
 }
 
-/// ¿Entró o salió dinero?
 enum Direction {
   OUTFLOW
   INFLOW
 }
 
-/// ¿De dónde salió la plata?
-/// OWN_FUNDS  -> débito, cuenta, transferencias: dinero propio, sale del bolsillo
-/// CREDIT     -> tarjeta de crédito: es deuda, no bolsillo
-/// INTERNAL   -> traslado entre bolsillos propios (pago de TC, ahorros -> corriente).
-///               No es gasto ni ingreso; se excluye para no contar doble.
 enum FundingSource {
   OWN_FUNDS
   CREDIT
@@ -40,11 +42,10 @@ enum CardKind {
   ACCOUNT
 }
 
-/// Un instrumento de pago: tarjeta de crédito, débito o cuenta.
-/// last4 por sí solo no identifica nada: puedes tener una débito y una crédito
-/// terminadas en los mismos 4 dígitos. Por eso la unicidad es [last4, kind].
 model Card {
   id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   last4     String
   kind      CardKind
   alias     String?
@@ -56,18 +57,19 @@ model Card {
 
   transactions Transaction[]
 
-  @@unique([last4, kind])
+  @@unique([userId, last4, kind])
+  @@index([userId])
 }
 
 model Transaction {
   id             String @id @default(cuid())
-  gmailMessageId String @unique
+  userId         String
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gmailMessageId String
   type           String
   amount         Float
   currency       String @default("COP")
 
-  /// @deprecated Lo reemplazan direction + fundingSource + card.
-  /// Se sigue poblando para no romper el front hasta la Fase 3.
   paymentMethod String?
 
   merchant         String?
@@ -83,24 +85,20 @@ model Transaction {
   cardId        String?
   card          Card?         @relation(fields: [cardId], references: [id])
 
-  /// Traslados internos y cualquier cosa que no deba sumar al gasto.
   excludeFromSpending Boolean @default(false)
+  manualOverride      Boolean @default(false)
+  ruleName            String?
 
-  /// Editada a mano desde la UI: un re-sync no la debe pisar.
-  manualOverride Boolean @default(false)
-
-  /// Qué regla del parser la produjo. Trazabilidad para depurar.
-  ruleName String?
-
-  @@index([transactionDate])
+  @@unique([userId, gmailMessageId])
+  @@index([userId, transactionDate])
   @@index([cardId])
 }
 
-/// Correo que el parser no supo interpretar. Sin esto los fallos se pierden
-/// en un console.warn y no hay forma de saber qué plantilla falta.
 model UnparsedEmail {
   id             String    @id @default(cuid())
-  gmailMessageId String    @unique
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gmailMessageId String
   subject        String
   fromAddress    String
   snippet        String
@@ -111,17 +109,22 @@ model UnparsedEmail {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  @@index([resolvedAt])
+  @@unique([userId, gmailMessageId])
+  @@index([userId, resolvedAt])
 }
 
 model GmailSync {
   id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   historyId String
   updatedAt DateTime @updatedAt
 }
 
 model OAuthToken {
   id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   accessToken  String
   refreshToken String
   expiresAt    DateTime

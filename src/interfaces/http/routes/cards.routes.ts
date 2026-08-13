@@ -1,13 +1,15 @@
 import { Router, Request, Response } from "express";
 import prisma from "../../../infrastructure/database/prisma";
 import { requireAuth } from "../middlewares/auth.middleware";
+import { currentUserId } from "../current-user";
 
 export const cardsRouter = Router();
 
 cardsRouter.use(requireAuth);
 
-cardsRouter.get("/cards", async (_req: Request, res: Response) => {
+cardsRouter.get("/cards", async (req: Request, res: Response) => {
   const cards = await prisma.card.findMany({
+    where: { userId: currentUserId(req) },
     orderBy: [{ kind: "asc" }, { last4: "asc" }],
     include: { _count: { select: { transactions: true } } },
   });
@@ -43,7 +45,10 @@ cardsRouter.patch("/cards/:id", async (req: Request, res: Response) => {
     }
   }
 
-  const existe = await prisma.card.findUnique({ where: { id }, select: { id: true } });
+  const existe = await prisma.card.findFirst({
+    where: { id, userId: currentUserId(req) },
+    select: { id: true },
+  });
   if (!existe) return res.status(404).json({ error: "Tarjeta no encontrada." });
 
   const card = await prisma.card.update({

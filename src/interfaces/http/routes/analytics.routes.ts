@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import prisma from "../../../infrastructure/database/prisma";
 import { requireAuth } from "../middlewares/auth.middleware";
+import { currentUserId } from "../current-user";
 import { esMesValido, finDeMes, inicioDeMes, mesBogota } from "../../../infrastructure/date/bogota";
 
 export const analyticsRouter = Router();
@@ -37,6 +38,7 @@ analyticsRouter.get("/analytics/summary", async (req: Request, res: Response) =>
 
   const transacciones = await prisma.transaction.findMany({
     where: {
+      userId: currentUserId(req),
       transactionDate: {
         ...(from ? { gte: inicioDeMes(from) } : {}),
         ...(to ? { lt: finDeMes(to) } : {}),
@@ -107,6 +109,7 @@ analyticsRouter.get("/analytics/by-card", async (req: Request, res: Response) =>
 
   const transacciones = await prisma.transaction.findMany({
     where: {
+      userId: currentUserId(req),
       direction: "OUTFLOW",
       excludeFromSpending: false,
       cardId: { not: null },

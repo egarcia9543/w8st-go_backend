@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import prisma from "../../../infrastructure/database/prisma";
 import { requireAuth } from "../middlewares/auth.middleware";
+import { currentUserId } from "../current-user";
 import { esMesValido, finDeMes, inicioDeMes, mesBogota } from "../../../infrastructure/date/bogota";
 
 export const transactionRouter = Router();
@@ -37,6 +38,7 @@ transactionRouter.get("/transactions", async (req: Request, res: Response) => {
 
   const transactions = await prisma.transaction.findMany({
     where: {
+      userId: currentUserId(req),
       ...(month
         ? { transactionDate: { gte: inicioDeMes(month), lt: finDeMes(month) } }
         : {}),
@@ -83,11 +85,17 @@ transactionRouter.patch("/transactions/:id", async (req: Request, res: Response)
     return res.status(400).json({ error: `\`direction\` debe ser uno de: ${DIRECCIONES.join(", ")}.` });
   }
 
-  const existe = await prisma.transaction.findUnique({ where: { id }, select: { id: true } });
+  const existe = await prisma.transaction.findFirst({
+    where: { id, userId: currentUserId(req) },
+    select: { id: true },
+  });
   if (!existe) return res.status(404).json({ error: "Transacción no encontrada." });
 
   if (cardId) {
-    const card = await prisma.card.findUnique({ where: { id: cardId }, select: { id: true } });
+    const card = await prisma.card.findFirst({
+      where: { id: cardId, userId: currentUserId(req) },
+      select: { id: true },
+    });
     if (!card) return res.status(400).json({ error: "`cardId` no corresponde a ninguna tarjeta." });
   }
 
@@ -114,9 +122,9 @@ transactionRouter.patch("/transactions/:id", async (req: Request, res: Response)
  * Ojo: ahora que existen los ingresos hay que excluirlos explícitamente. Sin
  * eso, una nómina de $2M entraría a este total como si fuera gasto.
  */
-transactionRouter.get("/transactions/summary", async (_req: Request, res: Response) => {
+transactionRouter.get("/transactions/summary", async (req: Request, res: Response) => {
   const transactions = await prisma.transaction.findMany({
-    where: { direction: "OUTFLOW", excludeFromSpending: false },
+    where: { userId: currentUserId(req), direction: "OUTFLOW", excludeFromSpending: false },
     select: { transactionDate: true, amount: true },
     orderBy: { transactionDate: "asc" },
   });

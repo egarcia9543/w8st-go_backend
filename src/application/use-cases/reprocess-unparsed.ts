@@ -17,22 +17,18 @@ export type ReprocessResult = {
  * semanas que esa regla ahora sí entendería. Quedarían capturados pero muertos.
  *
  * Los cuerpos ya están guardados en UnparsedEmail, así que esto no toca la API
- * de Gmail: es solo CPU y escrituras. Es el paso natural después de cada regla
- * nueva — y el que cierra el ciclo "descubro plantilla -> escribo regla ->
- * recupero lo perdido".
+ * de Gmail: es solo CPU y escrituras.
  */
-export const reprocessUnparsed = async (): Promise<ReprocessResult> => {
+export const reprocessUnparsed = async (userId: string): Promise<ReprocessResult> => {
   const pendientes = await prisma.unparsedEmail.findMany({
-    where: { resolvedAt: null },
+    where: { userId, resolvedAt: null },
     orderBy: { receivedAt: "asc" },
   });
 
-  // Un correo pudo haberse registrado como no parseable y además existir ya como
-  // transacción (por ejemplo si se arregló por otra vía). No lo dupliques.
   const yaRegistrados = new Set(
     (
       await prisma.transaction.findMany({
-        where: { gmailMessageId: { in: pendientes.map((e) => e.gmailMessageId) } },
+        where: { userId, gmailMessageId: { in: pendientes.map((e) => e.gmailMessageId) } },
         select: { gmailMessageId: true },
       })
     ).map((t) => t.gmailMessageId)
@@ -60,10 +56,10 @@ export const reprocessUnparsed = async (): Promise<ReprocessResult> => {
 
     if (!yaRegistrados.has(email.gmailMessageId)) {
       const { instrumentKind, ...datos } = resultado.transaction;
-      const cardId = await resolverCard(datos.instrumentLast4, instrumentKind);
+      const cardId = await resolverCard(userId, datos.instrumentLast4, instrumentKind);
 
       await prisma.transaction.create({
-        data: { gmailMessageId: email.gmailMessageId, ...datos, cardId },
+        data: { userId, gmailMessageId: email.gmailMessageId, ...datos, cardId },
       });
     }
 

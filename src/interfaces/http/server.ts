@@ -8,6 +8,7 @@ import { cardsRouter } from "./routes/cards.routes";
 import { emailsRouter } from "./routes/emails.routes";
 import { requireAuth } from "./middlewares/auth.middleware";
 import { syncTransactions } from "../../application/use-cases/sync-transactions";
+import { currentUserId } from "./current-user";
 
 export const buildServer = () => {
   const app = express();
@@ -42,7 +43,10 @@ export const buildServer = () => {
       return res.status(400).json({ error: "`limite` debe ser un número positivo." });
     }
 
-    const result = await syncTransactions({ since, limite: parsedLimite });
+    const result = await syncTransactions(currentUserId(req), {
+      since,
+      limite: parsedLimite,
+    });
     res.json(result);
   });
 

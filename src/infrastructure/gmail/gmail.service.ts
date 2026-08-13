@@ -2,9 +2,9 @@ import { google, gmail_v1 } from "googleapis";
 import { createOAuthClient } from "./gmail.client";
 import prisma from "../database/prisma";
 
-const buildAuthenticatedClient = async () => {
+const buildAuthenticatedClient = async (userId: string) => {
   const tokenRecord = await prisma.oAuthToken.findUnique({
-    where: { id: "singleton" },
+    where: { userId },
   });
 
   if (!tokenRecord) throw new Error("No hay tokens OAuth guardados. Completa el flujo /auth/google primero.");
@@ -19,7 +19,7 @@ const buildAuthenticatedClient = async () => {
   client.on("tokens", async (tokens) => {
     if (tokens.access_token) {
       await prisma.oAuthToken.update({
-        where: { id: "singleton" },
+        where: { userId },
         data: {
           accessToken: tokens.access_token,
           expiresAt: new Date(tokens.expiry_date!),
@@ -112,11 +112,12 @@ export type FetchOptions = {
 };
 
 export const fetchBancolombiaEmails = async (
+  userId: string,
   options: FetchOptions = {}
 ): Promise<FetchedEmail[]> => {
   const { since, limite = 500 } = options;
 
-  const auth = await buildAuthenticatedClient();
+  const auth = await buildAuthenticatedClient(userId);
   const gmail = google.gmail({ version: "v1", auth });
 
   const ids = await listarIds(gmail, construirQuery(since), limite);
@@ -143,18 +144,18 @@ export const fetchBancolombiaEmails = async (
 // Guarda el historyId actual del buzón. No lo usamos todavía para sincronizar
 // incrementalmente, pero sin persistirlo esa optimización nunca va a ser
 // posible: el historyId solo se puede obtener hacia adelante.
-export const guardarHistoryId = async (): Promise<void> => {
+export const guardarHistoryId = async (userId: string): Promise<void> => {
   try {
-    const auth = await buildAuthenticatedClient();
+    const auth = await buildAuthenticatedClient(userId);
     const gmail = google.gmail({ version: "v1", auth });
     const perfil = await gmail.users.getProfile({ userId: "me" });
     const historyId = perfil.data.historyId;
     if (!historyId) return;
 
     await prisma.gmailSync.upsert({
-      where: { id: "singleton" },
+      where: { userId },
       update: { historyId: String(historyId) },
-      create: { id: "singleton", historyId: String(historyId) },
+      create: { userId, historyId: String(historyId) },
     });
   } catch (err) {
     // No es crítico: si falla, el próximo sync completo sigue funcionando.
