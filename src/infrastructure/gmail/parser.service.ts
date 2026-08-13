@@ -1,97 +1,60 @@
-const decodeBase64 = (data: string): string =>
-  Buffer.from(data, "base64url").toString("utf-8");
+import { extractBody } from "./parsing/html";
+import { rules } from "./rules";
+import { ParsedTransaction } from "./rules/types";
 
-const extractBody = (payload: any): string => {
-  if (payload.body?.data) return decodeBase64(payload.body.data);
+export type { ParsedTransaction } from "./rules/types";
 
-  if (payload.parts) {
-    for (const part of payload.parts) {
-      if (part.mimeType === "text/plain" && part.body?.data)
-        return decodeBase64(part.body.data);
+export type ParseFailure = "NO_BODY" | "NO_MATCH" | "PARSE_ERROR";
+
+export type ParseResult =
+  | { ok: true; transaction: ParsedTransaction; body: string }
+  | { ok: false; reason: ParseFailure; body: string; error?: string };
+
+// Aplica el registro de reglas sobre un cuerpo ya extraído y limpio.
+// Separado de parseEmail para poder testear sin construir un payload de Gmail.
+export const parseBody = (body: string): ParseResult => {
+  if (!body.trim()) return { ok: false, reason: "NO_BODY", body };
+
+  for (const rule of rules) {
+    const match = body.match(rule.pattern);
+    if (!match) continue;
+
+    try {
+      const transaction = rule.parse(match);
+
+      // Una fecha inválida entra a la base como null y rompe los agregados en
+      // silencio. Mejor tratarlo como fallo y conservar el correo para revisar.
+      if (Number.isNaN(transaction.transactionDate.getTime())) {
+        return {
+          ok: false,
+          reason: "PARSE_ERROR",
+          body,
+          error: `${rule.name}: fecha inválida`,
+        };
+      }
+
+      if (!Number.isFinite(transaction.amount)) {
+        return {
+          ok: false,
+          reason: "PARSE_ERROR",
+          body,
+          error: `${rule.name}: monto inválido`,
+        };
+      }
+
+      return { ok: true, transaction, body };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "PARSE_ERROR",
+        body,
+        error: `${rule.name}: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
-    for (const part of payload.parts) {
-      if (part.mimeType === "text/html" && part.body?.data)
-        return decodeBase64(part.body.data);
-    }
   }
 
-  return "";
+  return { ok: false, reason: "NO_MATCH", body };
 };
 
-const parseAmount = (raw: string): number => {
-  const lastDot = raw.lastIndexOf(".");
-  const lastComma = raw.lastIndexOf(",");
-
-  if (lastDot > lastComma) {
-    // Formato americano: 10,000.00 → quitar comas, el punto es decimal
-    return parseFloat(raw.replace(/,/g, ""));
-  }
-  // Formato colombiano: 77.800,00 → quitar puntos, la coma es decimal
-  return parseFloat(raw.replace(/\./g, "").replace(",", "."));
-};
-
-const parseDate = (dateStr: string, timeStr: string): Date => {
-  const [day, month, year] = dateStr.split("/");
-  const fullYear = year.length === 2 ? `20${year}` : year;
-  return new Date(`${fullYear}-${month}-${day}T${timeStr}:00`);
-};
-
-export type ParsedTransaction = {
-  type: string;
-  amount: number;
-  currency: string;
-  paymentMethod: string | null;
-  merchant: string | null;
-  cardLast4: string | null;
-  channel: string | null;
-  recipientName: string | null;
-  recipientKey: string | null;
-  transactionDate: Date;
-};
-
-export const parseEmail = (payload: any): ParsedTransaction | null => {
-  const body = extractBody(payload);
-  if (!body) return null;
-
-  const purchaseRegex =
-    /Compraste\s+(COP|USD|\$)([\d.,]+)\s+en\s+(.+?)\s+con\s+tu\s+T\.(Cred|Deb)\s+\*(\d{4}),?\s+el\s+(\d{2}\/\d{2}\/\d{2,4})\s+a\s+las\s+(\d{2}:\d{2})/i;
-
-  const purchaseMatch = body.match(purchaseRegex);
-  if (purchaseMatch) {
-    const [, currencyRaw, amountRaw, merchant, cardType, last4, dateStr, timeStr] = purchaseMatch;
-    return {
-      type: "compra",
-      amount: parseAmount(amountRaw),
-      currency: currencyRaw === "$" ? "COP" : currencyRaw,
-      paymentMethod: cardType.toLowerCase() === "cred" ? "tarjeta_credito" : "tarjeta_debito",
-      merchant: merchant.trim(),
-      cardLast4: last4,
-      channel: null,
-      recipientName: null,
-      recipientKey: null,
-      transactionDate: parseDate(dateStr, timeStr),
-    };
-  }
-
-  const transferRegex =
-    /transferiste\s+\$([\d.,]+)\s+a\s+la\s+llave\s+(\d+)\s+desde\s+tu\s+cuenta\s+\*(\d{4})\s+a\s+(.+?)\s+el\s+(\d{2}\/\d{2}\/\d{2,4})\s+a\s+las\s+(\d{2}:\d{2})/i;
-
-  const transferMatch = body.match(transferRegex);
-  if (transferMatch) {
-    const [, amountRaw, recipientKey, accountLast4, recipientName, dateStr, timeStr] = transferMatch;
-    return {
-      type: "transferencia",
-      amount: parseAmount(amountRaw),
-      currency: "COP",
-      paymentMethod: "cuenta",
-      merchant: null,
-      cardLast4: accountLast4,
-      channel: body.includes("Bre-b") ? "Bre-b" : null,
-      recipientName: recipientName.trim(),
-      recipientKey,
-      transactionDate: parseDate(dateStr, timeStr),
-    };
-  }
-
-  return null;
-};
+export const parseEmail = (payload: unknown): ParseResult =>
+  parseBody(extractBody(payload));

@@ -8,6 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
     "seed": "node node_modules/tsx/dist/cli.mjs prisma/seed.ts",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "backfill:v2": "node node_modules/tsx/dist/cli.mjs prisma/backfill-v2.ts",
     "postinstall": "prisma generate"
   },
   "keywords": [],
