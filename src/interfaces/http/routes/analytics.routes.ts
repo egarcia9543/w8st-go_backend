@@ -3,6 +3,13 @@ import prisma from "../../../infrastructure/database/prisma";
 import { requireAuth } from "../middlewares/auth.middleware";
 import { currentUserId } from "../current-user";
 import { esMesValido, finDeMes, inicioDeMes, mesBogota } from "../../../infrastructure/date/bogota";
+import {
+  BillingCycle,
+  cicloPorMes,
+  cicloSerializado,
+  cicloVigente,
+  usaCicloDeFacturacion,
+} from "../../../infrastructure/date/billing-cycle";
 
 export const analyticsRouter = Router();
 
@@ -99,39 +106,121 @@ analyticsRouter.get("/analytics/summary", async (req: Request, res: Response) =>
   res.json(filas);
 });
 
-// Gasto por instrumento, en mes calendario (decisión §4 del plan).
+const MONEDA_PRINCIPAL = "COP";
+
+type Periodo = {
+  basis: "cycle" | "calendar";
+  label: string;
+  from: string;
+  to: string;
+  closesOn: string | null;
+  paymentDueDate: string | null;
+};
+
+type Ventana = { from: Date | null; to: Date | null; period: Periodo | null };
+
+const ventanaDeCiclo = (ciclo: BillingCycle): Ventana => ({
+  from: ciclo.from,
+  to: ciclo.to,
+  period: { basis: "cycle", ...cicloSerializado(ciclo) },
+});
+
+const ventanaCalendario = (month: string): Ventana => {
+  const from = inicioDeMes(month);
+  const to = finDeMes(month);
+
+  return {
+    from,
+    to,
+    period: {
+      basis: "calendar",
+      label: month,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      closesOn: null,
+      paymentDueDate: null,
+    },
+  };
+};
+
+const ventanaDeTarjeta = (
+  card: { kind: string; cutoffDay: number | null; paymentGraceDays: number | null },
+  month: string | undefined,
+  vigente: boolean
+): Ventana => {
+  if (vigente) {
+    return usaCicloDeFacturacion(card.kind, card.cutoffDay)
+      ? ventanaDeCiclo(cicloVigente(new Date(), card.cutoffDay, card.paymentGraceDays))
+      : ventanaCalendario(mesBogota(new Date()));
+  }
+
+  if (!month) return { from: null, to: null, period: null };
+
+  return usaCicloDeFacturacion(card.kind, card.cutoffDay)
+    ? ventanaDeCiclo(cicloPorMes(month, card.cutoffDay, card.paymentGraceDays))
+    : ventanaCalendario(month);
+};
+
 analyticsRouter.get("/analytics/by-card", async (req: Request, res: Response) => {
-  const { month } = req.query as { month?: string };
+  const { month, period } = req.query as { month?: string; period?: string };
 
   if (month && !esMesValido(month)) {
     return res.status(400).json({ error: "`month` debe ser YYYY-MM." });
   }
+  if (period !== undefined && period !== "current") {
+    return res.status(400).json({ error: "`period` sólo acepta el valor `current`." });
+  }
+
+  const vigente = period === "current";
+  const userId = currentUserId(req);
+
+  const cards = await prisma.card.findMany({
+    where: { userId, archived: false },
+    select: {
+      id: true,
+      last4: true,
+      kind: true,
+      alias: true,
+      cutoffDay: true,
+      paymentGraceDays: true,
+      creditLimit: true,
+    },
+  });
+
+  if (cards.length === 0) return res.json([]);
+
+  const ventanas = new Map(
+    cards.map((card) => [card.id, ventanaDeTarjeta(card, month, vigente)])
+  );
+
+  const limites = [...ventanas.values()].filter((v) => v.from && v.to);
+  const desde = limites.length
+    ? new Date(Math.min(...limites.map((v) => v.from!.getTime())))
+    : null;
+  const hasta = limites.length
+    ? new Date(Math.max(...limites.map((v) => v.to!.getTime())))
+    : null;
 
   const transacciones = await prisma.transaction.findMany({
     where: {
-      userId: currentUserId(req),
+      userId,
       direction: "OUTFLOW",
       excludeFromSpending: false,
-      cardId: { not: null },
-      ...(month
-        ? { transactionDate: { gte: inicioDeMes(month), lt: finDeMes(month) } }
-        : {}),
+      cardId: { in: cards.map((c) => c.id) },
+      ...(desde && hasta ? { transactionDate: { gte: desde, lt: hasta } } : {}),
     },
     select: {
       amount: true,
       currency: true,
       merchant: true,
       counterpartyName: true,
-      card: { select: { id: true, last4: true, kind: true, alias: true, cutoffDay: true } },
+      transactionDate: true,
+      cardId: true,
     },
   });
 
   type Acumulado = {
     cardId: string;
-    last4: string;
-    kind: string;
-    alias: string | null;
-    cutoffDay: number | null;
     currency: string;
     total: number;
     count: number;
@@ -140,49 +229,68 @@ analyticsRouter.get("/analytics/by-card", async (req: Request, res: Response) =>
 
   const porTarjeta = new Map<string, Acumulado>();
 
+  const acumular = (cardId: string, currency: string): Acumulado => {
+    const clave = `${cardId}|${currency}`;
+    const existente = porTarjeta.get(clave);
+    if (existente) return existente;
+
+    const nuevo: Acumulado = { cardId, currency, total: 0, count: 0, comercios: new Map() };
+    porTarjeta.set(clave, nuevo);
+    return nuevo;
+  };
+
   for (const tx of transacciones) {
-    if (!tx.card) continue;
-    const clave = `${tx.card.id}|${tx.currency}`;
+    if (!tx.cardId) continue;
 
-    const acc: Acumulado = porTarjeta.get(clave) ?? {
-      cardId: tx.card.id,
-      last4: tx.card.last4,
-      kind: tx.card.kind,
-      alias: tx.card.alias,
-      cutoffDay: tx.card.cutoffDay,
-      currency: tx.currency,
-      total: 0,
-      count: 0,
-      comercios: new Map(),
-    };
+    const ventana = ventanas.get(tx.cardId);
+    if (!ventana) continue;
+    if (ventana.from && tx.transactionDate < ventana.from) continue;
+    if (ventana.to && tx.transactionDate >= ventana.to) continue;
 
+    const acc = acumular(tx.cardId, tx.currency);
     acc.total += tx.amount;
     acc.count += 1;
 
     const nombre = tx.merchant ?? tx.counterpartyName;
     if (nombre) acc.comercios.set(nombre, (acc.comercios.get(nombre) ?? 0) + tx.amount);
-
-    porTarjeta.set(clave, acc);
   }
 
+  for (const card of cards) {
+    if (!ventanas.get(card.id)?.period) continue;
+    if (!usaCicloDeFacturacion(card.kind, card.cutoffDay)) continue;
+    acumular(card.id, MONEDA_PRINCIPAL);
+  }
+
+  const porId = new Map(cards.map((card) => [card.id, card]));
+  const redondear = (n: number) => Math.round(n * 100) / 100;
+
   const filas = [...porTarjeta.values()]
-    .map((a) => ({
-      cardId: a.cardId,
-      last4: a.last4,
-      kind: a.kind,
-      alias: a.alias,
-      cutoffDay: a.cutoffDay,
-      currency: a.currency,
-      total: Math.round(a.total * 100) / 100,
-      count: a.count,
-      period: month
-        ? { from: inicioDeMes(month).toISOString(), to: finDeMes(month).toISOString() }
-        : null,
-      topMerchants: [...a.comercios.entries()]
-        .sort((x, y) => y[1] - x[1])
-        .slice(0, 5)
-        .map(([merchant, total]) => ({ merchant, total: Math.round(total * 100) / 100 })),
-    }))
+    .map((a) => {
+      const card = porId.get(a.cardId)!;
+      const total = redondear(a.total);
+
+      return {
+        cardId: a.cardId,
+        last4: card.last4,
+        kind: card.kind,
+        alias: card.alias,
+        cutoffDay: card.cutoffDay,
+        paymentGraceDays: card.paymentGraceDays,
+        creditLimit: card.creditLimit,
+        currency: a.currency,
+        total,
+        count: a.count,
+        utilization:
+          card.creditLimit && card.creditLimit > 0 && a.currency === MONEDA_PRINCIPAL
+            ? Math.round((total / card.creditLimit) * 10000) / 10000
+            : null,
+        period: ventanas.get(a.cardId)!.period,
+        topMerchants: [...a.comercios.entries()]
+          .sort((x, y) => y[1] - x[1])
+          .slice(0, 5)
+          .map(([merchant, total]) => ({ merchant, total: redondear(total) })),
+      };
+    })
     .sort((a, b) => b.total - a.total);
 
   res.json(filas);

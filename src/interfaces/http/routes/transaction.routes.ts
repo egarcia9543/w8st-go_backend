@@ -3,6 +3,7 @@ import prisma from "../../../infrastructure/database/prisma";
 import { requireAuth } from "../middlewares/auth.middleware";
 import { currentUserId } from "../current-user";
 import { esMesValido, finDeMes, inicioDeMes, mesBogota } from "../../../infrastructure/date/bogota";
+import { cicloPorMes, usaCicloDeFacturacion } from "../../../infrastructure/date/billing-cycle";
 
 export const transactionRouter = Router();
 
@@ -18,8 +19,9 @@ const esDireccion = (v: string): v is Direccion => DIRECCIONES.includes(v as Dir
 const esFuente = (v: string): v is Fuente => FUENTES.includes(v as Fuente);
 
 transactionRouter.get("/transactions", async (req: Request, res: Response) => {
-  const { month, direction, fundingSource, cardId, type } = req.query as {
+  const { month, cycle, direction, fundingSource, cardId, type } = req.query as {
     month?: string;
+    cycle?: string;
     direction?: string;
     fundingSource?: string;
     cardId?: string;
@@ -29,6 +31,12 @@ transactionRouter.get("/transactions", async (req: Request, res: Response) => {
   if (month && !esMesValido(month)) {
     return res.status(400).json({ error: "`month` debe ser YYYY-MM." });
   }
+  if (cycle && !esMesValido(cycle)) {
+    return res.status(400).json({ error: "`cycle` debe ser YYYY-MM." });
+  }
+  if (cycle && !cardId) {
+    return res.status(400).json({ error: "`cycle` requiere `cardId`." });
+  }
   if (direction && !esDireccion(direction)) {
     return res.status(400).json({ error: `\`direction\` debe ser uno de: ${DIRECCIONES.join(", ")}.` });
   }
@@ -36,12 +44,30 @@ transactionRouter.get("/transactions", async (req: Request, res: Response) => {
     return res.status(400).json({ error: `\`fundingSource\` debe ser uno de: ${FUENTES.join(", ")}.` });
   }
 
+  let ventanaCiclo: { gte: Date; lt: Date } | null = null;
+
+  if (cycle && cardId) {
+    const card = await prisma.card.findFirst({
+      where: { id: cardId, userId: currentUserId(req) },
+      select: { kind: true, cutoffDay: true, paymentGraceDays: true },
+    });
+    if (!card) return res.status(400).json({ error: "`cardId` no corresponde a ninguna tarjeta." });
+
+    const ventana = usaCicloDeFacturacion(card.kind, card.cutoffDay)
+      ? cicloPorMes(cycle, card.cutoffDay, card.paymentGraceDays)
+      : { from: inicioDeMes(cycle), to: finDeMes(cycle) };
+
+    ventanaCiclo = { gte: ventana.from, lt: ventana.to };
+  }
+
   const transactions = await prisma.transaction.findMany({
     where: {
       userId: currentUserId(req),
-      ...(month
-        ? { transactionDate: { gte: inicioDeMes(month), lt: finDeMes(month) } }
-        : {}),
+      ...(ventanaCiclo
+        ? { transactionDate: ventanaCiclo }
+        : month
+          ? { transactionDate: { gte: inicioDeMes(month), lt: finDeMes(month) } }
+          : {}),
       ...(direction && esDireccion(direction) ? { direction } : {}),
       ...(fundingSource && esFuente(fundingSource) ? { fundingSource } : {}),
       ...(cardId ? { cardId } : {}),
