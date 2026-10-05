@@ -23,6 +23,8 @@ model User {
   unparsedEmails UnparsedEmail[]
   oauthToken     OAuthToken?
   gmailSync      GmailSync?
+  wishlistTiers  WishlistTier[]
+  wishlistItems  WishlistItem[]
 }
 
 enum Direction {
@@ -121,6 +123,47 @@ model GmailSync {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   historyId String
   updatedAt DateTime @updatedAt
+}
+
+enum WishlistStatus {
+  WANTED
+  BOUGHT
+  DISCARDED
+}
+
+model WishlistTier {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label    String
+  color    String
+  position Int
+
+  items WishlistItem[]
+
+  @@unique([userId, position])
+}
+
+model WishlistItem {
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tierId     String
+  tier       WishlistTier   @relation(fields: [tierId], references: [id])
+  name       String
+  price      Float
+  currency   String         @default("COP")
+  productUrl String?
+  imageUrl   String?
+  notes      String?
+  position   Int
+  status     WishlistStatus @default(WANTED)
+  boughtAt   DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  @@index([userId, status])
+  @@index([tierId, position])
 }
 
 model OAuthToken {
