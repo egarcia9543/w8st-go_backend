@@ -22,7 +22,8 @@ type Bucket = {
   credit: number;
   income: number;
   internal: number;
-  counts: { outOfPocket: number; credit: number; income: number; internal: number };
+  savings: number;
+  counts: { outOfPocket: number; credit: number; income: number; internal: number; savings: number };
 };
 
 const bucketVacio = (month: string, currency: string): Bucket => ({
@@ -32,7 +33,8 @@ const bucketVacio = (month: string, currency: string): Bucket => ({
   credit: 0,
   income: 0,
   internal: 0,
-  counts: { outOfPocket: 0, credit: 0, income: 0, internal: 0 },
+  savings: 0,
+  counts: { outOfPocket: 0, credit: 0, income: 0, internal: 0, savings: 0 },
 });
 
 // COP y USD no se suman: son magnitudes distintas. Se devuelve una fila por
@@ -58,6 +60,7 @@ analyticsRouter.get("/analytics/summary", async (req: Request, res: Response) =>
       direction: true,
       fundingSource: true,
       excludeFromSpending: true,
+      category: { select: { group: { select: { kind: true } } } },
     },
   });
 
@@ -77,6 +80,9 @@ analyticsRouter.get("/analytics/summary", async (req: Request, res: Response) =>
     } else if (tx.direction === "INFLOW") {
       bucket.income += tx.amount;
       bucket.counts.income += 1;
+    } else if (tx.category?.group?.kind === "SAVINGS") {
+      bucket.savings += tx.amount;
+      bucket.counts.savings += 1;
     } else if (tx.fundingSource === "CREDIT") {
       bucket.credit += tx.amount;
       bucket.counts.credit += 1;
@@ -99,6 +105,7 @@ analyticsRouter.get("/analytics/summary", async (req: Request, res: Response) =>
       credit: redondear(b.credit),
       income: redondear(b.income),
       internal: redondear(b.internal),
+      savings: redondear(b.savings),
       net: redondear(b.income - b.outOfPocket - b.credit),
       counts: b.counts,
     }));

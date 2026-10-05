@@ -1,3 +1,5 @@
+import { isHexColor, ParseResult } from "./input";
+
 export const WISHLIST_STATUSES = ["WANTED", "BOUGHT", "DISCARDED"] as const;
 export const WISHLIST_CURRENCIES = ["COP", "USD"] as const;
 
@@ -25,9 +27,6 @@ const isHttpUrl = (value: string): boolean => {
   }
 };
 
-const isHexColor = (value: unknown): value is string =>
-  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
-
 export type ItemInput = {
   name?: string;
   price?: number;
@@ -39,8 +38,6 @@ export type ItemInput = {
 };
 
 export type TierInput = { label?: string; color?: string };
-
-export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const optionalText = (
   value: unknown,
