@@ -25,6 +25,8 @@ model User {
   gmailSync      GmailSync?
   wishlistTiers  WishlistTier[]
   wishlistItems  WishlistItem[]
+  budgetGroups   BudgetGroup[]
+  categories     Category[]
 }
 
 enum Direction {
@@ -93,9 +95,50 @@ model Transaction {
   manualOverride      Boolean @default(false)
   ruleName            String?
 
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
   @@unique([userId, gmailMessageId])
   @@index([userId, transactionDate])
   @@index([cardId])
+  @@index([userId, categoryId])
+}
+
+enum BudgetGroupKind {
+  SPENDING
+  SAVINGS
+}
+
+model BudgetGroup {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  kind          BudgetGroupKind @default(SPENDING)
+  targetPercent Float
+  color         String
+  position      Int
+
+  categories Category[]
+
+  @@unique([userId, name])
+}
+
+model Category {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  color        String
+  groupId      String?
+  group        BudgetGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  monthlyLimit Float?
+  archived     Boolean      @default(false)
+  position     Int
+
+  transactions Transaction[]
+
+  @@unique([userId, name])
 }
 
 model UnparsedEmail {

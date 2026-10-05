@@ -7,6 +7,7 @@ import { analyticsRouter } from "./routes/analytics.routes";
 import { cardsRouter } from "./routes/cards.routes";
 import { emailsRouter } from "./routes/emails.routes";
 import { wishlistRouter } from "./routes/wishlist.routes";
+import { categoriesRouter } from "./routes/categories.routes";
 import { requireAuth } from "./middlewares/auth.middleware";
 import { syncTransactions } from "../../application/use-cases/sync-transactions";
 import { currentUserId } from "./current-user";
@@ -30,6 +31,7 @@ export const buildServer = () => {
   app.use(cardsRouter);
   app.use(emailsRouter);
   app.use(wishlistRouter);
+  app.use(categoriesRouter);
 
   app.post("/sync", requireAuth, async (req, res) => {
     const { since, limite } = req.query as { since?: string; limite?: string };

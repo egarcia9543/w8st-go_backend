@@ -4,6 +4,17 @@ import { requireAuth } from "../middlewares/auth.middleware";
 import { currentUserId } from "../current-user";
 import { esMesValido, finDeMes, inicioDeMes, mesBogota } from "../../../infrastructure/date/bogota";
 import { cicloPorMes, usaCicloDeFacturacion } from "../../../infrastructure/date/billing-cycle";
+import { CLASSIFIABLE_WHERE, isClassifiable } from "../../../application/use-cases/classifiable";
+
+const TRANSACTION_RELATIONS = {
+  card: { select: { id: true, last4: true, kind: true, alias: true } },
+  category: { select: { id: true, name: true, color: true } },
+} as const;
+
+const BULK_LIMIT = 500;
+
+const findOwnCategory = (userId: string, id: string) =>
+  prisma.category.findFirst({ where: { id, userId, archived: false }, select: { id: true } });
 
 export const transactionRouter = Router();
 
@@ -74,9 +85,7 @@ transactionRouter.get("/transactions", async (req: Request, res: Response) => {
       ...(type ? { type } : {}),
     },
     orderBy: { transactionDate: "desc" },
-    include: {
-      card: { select: { id: true, last4: true, kind: true, alias: true } },
-    },
+    include: TRANSACTION_RELATIONS,
   });
 
   // Los dos últimos campos son alias de compatibilidad: el front todavía lee
@@ -93,15 +102,66 @@ transactionRouter.get("/transactions", async (req: Request, res: Response) => {
   );
 });
 
+transactionRouter.get("/transactions/uncategorized-count", async (req: Request, res: Response) => {
+  const { month } = req.query as { month?: string };
+
+  if (month && !esMesValido(month)) {
+    return res.status(400).json({ error: "`month` debe ser YYYY-MM." });
+  }
+
+  const count = await prisma.transaction.count({
+    where: {
+      userId: currentUserId(req),
+      ...CLASSIFIABLE_WHERE,
+      categoryId: null,
+      ...(month ? { transactionDate: { gte: inicioDeMes(month), lt: finDeMes(month) } } : {}),
+    },
+  });
+
+  res.json({ count });
+});
+
+transactionRouter.patch("/transactions/category", async (req: Request, res: Response) => {
+  const { ids, categoryId } = (req.body ?? {}) as { ids?: unknown; categoryId?: unknown };
+
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    ids.length > BULK_LIMIT ||
+    !ids.every((id) => typeof id === "string")
+  ) {
+    return res
+      .status(400)
+      .json({ error: `\`ids\` debe ser una lista de entre 1 y ${BULK_LIMIT} ids.` });
+  }
+  if (categoryId !== null && typeof categoryId !== "string") {
+    return res.status(400).json({ error: "`categoryId` debe ser un id o null." });
+  }
+
+  const userId = currentUserId(req);
+  if (categoryId && !(await findOwnCategory(userId, categoryId))) {
+    return res.status(400).json({ error: "`categoryId` no corresponde a ninguna categoría." });
+  }
+
+  const { count } = await prisma.transaction.updateMany({
+    where: { id: { in: ids }, userId, ...CLASSIFIABLE_WHERE },
+    data: { categoryId },
+  });
+
+  res.json({ updated: count });
+});
+
 // El override manual de §3.3: la única defensa contra un pago de tarjeta que
 // llegue con la plantilla genérica de "Pagaste" y sea indistinguible de un gasto.
 transactionRouter.patch("/transactions/:id", async (req: Request, res: Response) => {
   const id = String(req.params.id);
-  const { fundingSource, excludeFromSpending, cardId, direction } = (req.body ?? {}) as {
+  const { fundingSource, excludeFromSpending, cardId, direction, categoryId } = (req.body ??
+    {}) as {
     fundingSource?: string;
     excludeFromSpending?: boolean;
     cardId?: string | null;
     direction?: string;
+    categoryId?: string | null;
   };
 
   if (fundingSource !== undefined && !esFuente(fundingSource)) {
@@ -110,20 +170,45 @@ transactionRouter.patch("/transactions/:id", async (req: Request, res: Response)
   if (direction !== undefined && !esDireccion(direction)) {
     return res.status(400).json({ error: `\`direction\` debe ser uno de: ${DIRECCIONES.join(", ")}.` });
   }
+  if (categoryId !== undefined && categoryId !== null && typeof categoryId !== "string") {
+    return res.status(400).json({ error: "`categoryId` debe ser un id o null." });
+  }
 
+  const userId = currentUserId(req);
   const existe = await prisma.transaction.findFirst({
-    where: { id, userId: currentUserId(req) },
-    select: { id: true },
+    where: { id, userId },
+    select: { id: true, direction: true, fundingSource: true, excludeFromSpending: true },
   });
   if (!existe) return res.status(404).json({ error: "Transacción no encontrada." });
 
   if (cardId) {
     const card = await prisma.card.findFirst({
-      where: { id: cardId, userId: currentUserId(req) },
+      where: { id: cardId, userId },
       select: { id: true },
     });
     if (!card) return res.status(400).json({ error: "`cardId` no corresponde a ninguna tarjeta." });
   }
+
+  const classifiable = isClassifiable({
+    direction: direction ?? existe.direction,
+    fundingSource: fundingSource ?? existe.fundingSource,
+    excludeFromSpending: excludeFromSpending ?? existe.excludeFromSpending,
+  });
+
+  if (categoryId) {
+    if (!classifiable) {
+      return res
+        .status(400)
+        .json({ error: "Solo se clasifican gastos: no ingresos, internos ni excluidos." });
+    }
+    if (!(await findOwnCategory(userId, categoryId))) {
+      return res.status(400).json({ error: "`categoryId` no corresponde a ninguna categoría." });
+    }
+  }
+
+  const touchesMoney = [fundingSource, direction, excludeFromSpending, cardId].some(
+    (value) => value !== undefined
+  );
 
   const transaction = await prisma.transaction.update({
     where: { id },
@@ -132,10 +217,11 @@ transactionRouter.patch("/transactions/:id", async (req: Request, res: Response)
       ...(direction !== undefined && esDireccion(direction) ? { direction } : {}),
       ...(excludeFromSpending !== undefined ? { excludeFromSpending } : {}),
       ...(cardId !== undefined ? { cardId } : {}),
-      // Marca la fila como tocada a mano para que un re-sync no la pise.
-      manualOverride: true,
+      ...(categoryId !== undefined ? { categoryId } : {}),
+      ...(classifiable ? {} : { categoryId: null }),
+      ...(touchesMoney ? { manualOverride: true } : {}),
     },
-    include: { card: { select: { id: true, last4: true, kind: true, alias: true } } },
+    include: TRANSACTION_RELATIONS,
   });
 
   res.json(transaction);
