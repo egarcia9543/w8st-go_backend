@@ -28,6 +28,8 @@ model User {
   budgetGroups     BudgetGroup[]
   categories       Category[]
   referenceIncomes ReferenceIncome[]
+  debts            Debt[]
+  debtPayments     DebtPayment[]
 }
 
 enum Direction {
@@ -229,4 +231,43 @@ model OAuthToken {
   refreshToken String
   expiresAt    DateTime
   updatedAt    DateTime @updatedAt
+}
+
+enum DebtKind {
+  CREDIT_CARD
+  LOAN
+  OTHER
+}
+
+model Debt {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  kind           DebtKind @default(OTHER)
+  balance        Float
+  annualRate     Float
+  monthlyPayment Float
+  paidByOther    Boolean  @default(false)
+  notes          String?
+  archived       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  payments DebtPayment[]
+
+  @@index([userId, archived])
+}
+
+model DebtPayment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  debtId    String
+  debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount    Float
+  paidAt    DateTime
+  createdAt DateTime @default(now())
+
+  @@index([debtId, paidAt])
 }

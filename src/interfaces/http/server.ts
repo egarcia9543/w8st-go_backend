@@ -9,6 +9,7 @@ import { emailsRouter } from "./routes/emails.routes";
 import { wishlistRouter } from "./routes/wishlist.routes";
 import { categoriesRouter } from "./routes/categories.routes";
 import { budgetRouter } from "./routes/budget.routes";
+import { debtsRouter } from "./routes/debts.routes";
 import { requireAuth } from "./middlewares/auth.middleware";
 import { syncTransactions } from "../../application/use-cases/sync-transactions";
 import { currentUserId } from "./current-user";
@@ -34,6 +35,7 @@ export const buildServer = () => {
   app.use(wishlistRouter);
   app.use(categoriesRouter);
   app.use(budgetRouter);
+  app.use(debtsRouter);
 
   app.post("/sync", requireAuth, async (req, res) => {
     const { since, limite } = req.query as { since?: string; limite?: string };
