@@ -4,7 +4,7 @@ import { requireAuth } from "../middlewares/auth.middleware";
 import { currentUserId } from "../current-user";
 import { mesBogota } from "../../../infrastructure/date/bogota";
 import { buildDebtPlan } from "../../../application/use-cases/debt-plan";
-import { parseDebtInput, parseExtra, parsePaymentInput } from "../debt-input";
+import { parseDebtInput, parseExtra, parsePaymentInput, parseStrategy } from "../debt-input";
 
 export const debtsRouter = Router();
 
@@ -17,6 +17,7 @@ type DebtRow = {
   balance: number;
   annualRate: number;
   monthlyPayment: number;
+  dueDay: number | null;
   paidByOther: boolean;
   notes: string | null;
   archived: boolean;
@@ -24,19 +25,44 @@ type DebtRow = {
   updatedAt: Date;
 };
 
-const serializeDebt = (debt: DebtRow) => ({
+type PaymentRow = { amount: number; paidAt: Date };
+
+// Ventana de pagos que acompaña cada deuda: alcanza para saber si la cuota del
+// mes ya se pagó aunque el pago se haya hecho antes del corte del mes anterior.
+const RECENT_PAYMENTS_DAYS = 70;
+
+const serializeDebt = (debt: DebtRow, recentPayments: PaymentRow[] = []) => ({
   id: debt.id,
   name: debt.name,
   kind: debt.kind,
   balance: debt.balance,
   annualRate: debt.annualRate,
   monthlyPayment: debt.monthlyPayment,
+  dueDay: debt.dueDay,
   paidByOther: debt.paidByOther,
   notes: debt.notes,
   archived: debt.archived,
   createdAt: debt.createdAt,
   updatedAt: debt.updatedAt,
+  recentPayments: recentPayments.map((payment) => ({
+    amount: payment.amount,
+    paidAt: payment.paidAt,
+  })),
 });
+
+const recentPaymentsSince = (now: Date) =>
+  new Date(now.getTime() - RECENT_PAYMENTS_DAYS * 24 * 60 * 60 * 1000);
+
+const findOwnDebtWithPayments = (userId: string, id: string) =>
+  prisma.debt.findFirst({
+    where: { id, userId },
+    include: {
+      payments: {
+        where: { paidAt: { gte: recentPaymentsSince(new Date()) } },
+        orderBy: { paidAt: "desc" },
+      },
+    },
+  });
 
 const findOwnDebt = (userId: string, id: string) =>
   prisma.debt.findFirst({ where: { id, userId } });
@@ -50,21 +76,31 @@ debtsRouter.get("/debts", async (req: Request, res: Response) => {
       ...(includeArchived === "true" ? {} : { archived: false }),
     },
     orderBy: [{ annualRate: "desc" }, { balance: "asc" }],
+    include: {
+      payments: {
+        where: { paidAt: { gte: recentPaymentsSince(new Date()) } },
+        orderBy: { paidAt: "desc" },
+      },
+    },
   });
 
-  res.json(debts.map(serializeDebt));
+  res.json(debts.map((debt) => serializeDebt(debt, debt.payments)));
 });
 
 // Va antes de /debts/:id para que "plan" no se lea como un id.
 debtsRouter.get("/debts/plan", async (req: Request, res: Response) => {
-  const extra = parseExtra((req.query as { extra?: string }).extra);
+  const query = req.query as { extra?: string; strategy?: string };
+  const extra = parseExtra(query.extra);
   if (!extra.ok) return res.status(400).json({ error: extra.error });
+  const strategy = parseStrategy(query.strategy);
+  if (!strategy.ok) return res.status(400).json({ error: strategy.error });
 
   const debts = await prisma.debt.findMany({
     where: { userId: currentUserId(req), archived: false, balance: { gt: 0 } },
     select: {
       id: true,
       name: true,
+      kind: true,
       balance: true,
       annualRate: true,
       monthlyPayment: true,
@@ -72,7 +108,14 @@ debtsRouter.get("/debts/plan", async (req: Request, res: Response) => {
     },
   });
 
-  res.json(buildDebtPlan({ debts, extraPerMonth: extra.value, startMonth: mesBogota(new Date()) }));
+  res.json(
+    buildDebtPlan({
+      debts,
+      extraPerMonth: extra.value,
+      startMonth: mesBogota(new Date()),
+      strategy: strategy.value,
+    })
+  );
 });
 
 debtsRouter.post("/debts", async (req: Request, res: Response) => {
@@ -103,8 +146,9 @@ debtsRouter.patch("/debts/:id", async (req: Request, res: Response) => {
   const existing = await findOwnDebt(userId, String(req.params.id));
   if (!existing) return res.status(404).json({ error: "Deuda no encontrada." });
 
-  const debt = await prisma.debt.update({ where: { id: existing.id }, data: parsed.value });
-  res.json(serializeDebt(debt));
+  await prisma.debt.update({ where: { id: existing.id }, data: parsed.value });
+  const debt = await findOwnDebtWithPayments(userId, existing.id);
+  res.json(serializeDebt(debt!, debt!.payments));
 });
 
 debtsRouter.delete("/debts/:id", async (req: Request, res: Response) => {
@@ -127,7 +171,7 @@ debtsRouter.post("/debts/:id/payments", async (req: Request, res: Response) => {
   if (!existing) return res.status(404).json({ error: "Deuda no encontrada." });
 
   const { amount, paidAt } = parsed.value;
-  const [, debt] = await prisma.$transaction([
+  await prisma.$transaction([
     prisma.debtPayment.create({ data: { userId, debtId: existing.id, amount, paidAt } }),
     prisma.debt.update({
       where: { id: existing.id },
@@ -135,7 +179,8 @@ debtsRouter.post("/debts/:id/payments", async (req: Request, res: Response) => {
     }),
   ]);
 
-  res.status(201).json(serializeDebt(debt));
+  const debt = await findOwnDebtWithPayments(userId, existing.id);
+  res.status(201).json(serializeDebt(debt!, debt!.payments));
 });
 
 debtsRouter.get("/debts/:id/payments", async (req: Request, res: Response) => {

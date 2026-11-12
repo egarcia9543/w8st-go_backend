@@ -248,6 +248,7 @@ model Debt {
   balance        Float
   annualRate     Float
   monthlyPayment Float
+  dueDay         Int?
   paidByOther    Boolean  @default(false)
   notes          String?
   archived       Boolean  @default(false)
