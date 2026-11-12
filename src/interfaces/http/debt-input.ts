@@ -1,5 +1,6 @@
 import { AMOUNT_MAX, isPositiveAmount } from "./budget-input";
 import { ParseResult } from "./input";
+import { DEBT_STRATEGIES, DebtStrategy } from "../../application/use-cases/debt-plan";
 
 export const DEBT_KINDS = ["CREDIT_CARD", "LOAN", "OTHER"] as const;
 export type DebtKind = (typeof DEBT_KINDS)[number];
@@ -7,6 +8,8 @@ export type DebtKind = (typeof DEBT_KINDS)[number];
 export const DEBT_NAME_MAX_LENGTH = 60;
 export const DEBT_NOTES_MAX_LENGTH = 500;
 export const ANNUAL_RATE_MAX = 100;
+export const DUE_DAY_MIN = 1;
+export const DUE_DAY_MAX = 31;
 
 export type DebtInput = {
   name?: string;
@@ -14,6 +17,7 @@ export type DebtInput = {
   balance?: number;
   annualRate?: number;
   monthlyPayment?: number;
+  dueDay?: number | null;
   paidByOther?: boolean;
   notes?: string | null;
   archived?: boolean;
@@ -78,6 +82,22 @@ export const parseDebtInput = (body: unknown, mode: Mode): ParseResult<DebtInput
     input.monthlyPayment = raw.monthlyPayment;
   }
 
+  if (raw.dueDay !== undefined) {
+    const value = raw.dueDay;
+    const isDay =
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= DUE_DAY_MIN &&
+      value <= DUE_DAY_MAX;
+    if (value !== null && !isDay) {
+      return {
+        ok: false,
+        error: `\`dueDay\` debe ser un día entre ${DUE_DAY_MIN} y ${DUE_DAY_MAX} o null.`,
+      };
+    }
+    input.dueDay = value as number | null;
+  }
+
   if (raw.paidByOther !== undefined) {
     if (typeof raw.paidByOther !== "boolean") {
       return { ok: false, error: "`paidByOther` debe ser true o false." };
@@ -136,4 +156,13 @@ export const parseExtra = (value: unknown): ParseResult<number> => {
     return { ok: false, error: "`extra` debe ser un número mayor o igual a 0." };
   }
   return { ok: true, value: extra };
+};
+
+/// `strategy` de la query del plan: vacío usa "Tarjetas primero".
+export const parseStrategy = (value: unknown): ParseResult<DebtStrategy> => {
+  if (value === undefined || value === "") return { ok: true, value: "CARDS_FIRST" };
+  if (!DEBT_STRATEGIES.includes(value as DebtStrategy)) {
+    return { ok: false, error: `\`strategy\` debe ser uno de: ${DEBT_STRATEGIES.join(", ")}.` };
+  }
+  return { ok: true, value: value as DebtStrategy };
 };

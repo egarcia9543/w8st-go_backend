@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { parseDebtInput, parseExtra, parsePaymentInput } from "../debt-input";
+import { parseDebtInput, parseExtra, parsePaymentInput, parseStrategy } from "../debt-input";
 
 const NOW = new Date("2026-11-11T17:00:00Z");
 
@@ -37,6 +37,17 @@ describe("parseDebtInput", () => {
   test("valida el tipo de deuda", () => {
     assert.equal(parseDebtInput({ kind: "LOAN" }, "update").ok, true);
     assert.equal(parseDebtInput({ kind: "HIPOTECA" }, "update").ok, false);
+  });
+
+  test("el día de pago va de 1 a 31 o null", () => {
+    assert.deepEqual(parseDebtInput({ dueDay: 17 }, "update"), { ok: true, value: { dueDay: 17 } });
+    assert.deepEqual(parseDebtInput({ dueDay: null }, "update"), {
+      ok: true,
+      value: { dueDay: null },
+    });
+    assert.equal(parseDebtInput({ dueDay: 0 }, "update").ok, false);
+    assert.equal(parseDebtInput({ dueDay: 32 }, "update").ok, false);
+    assert.equal(parseDebtInput({ dueDay: 3.5 }, "update").ok, false);
   });
 
   test("las notas vacías se guardan como null", () => {
@@ -80,5 +91,13 @@ describe("parseExtra", () => {
     assert.deepEqual(parseExtra("1220000"), { ok: true, value: 1220000 });
     assert.equal(parseExtra("-5").ok, false);
     assert.equal(parseExtra("mucho").ok, false);
+  });
+});
+
+describe("parseStrategy", () => {
+  test("por defecto Tarjetas primero y solo acepta estrategias conocidas", () => {
+    assert.deepEqual(parseStrategy(undefined), { ok: true, value: "CARDS_FIRST" });
+    assert.deepEqual(parseStrategy("AVALANCHE"), { ok: true, value: "AVALANCHE" });
+    assert.equal(parseStrategy("BOLA_DE_NIEVE").ok, false);
   });
 });
